@@ -1,7 +1,7 @@
 /*
  * LayoutProcessor.java
  *
- * Copyright 2020-2022 Volker Kunert.
+ * Copyright 2020-2024 Volker Kunert.
  *
  * The contents of this file are subject to the Mozilla Public License Version 1.1
  * (the "License"); you may not use this file except in compliance with the License.
@@ -52,13 +52,33 @@ import java.awt.geom.Point2D;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.URI;
 import java.net.URL;
 import java.nio.file.Files;
 import java.text.AttributedString;
 import java.text.Bidi;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import org.apache.fop.apps.io.InternalResourceResolver;
+import org.apache.fop.apps.io.ResourceResolverFactory;
+import org.apache.fop.complexscripts.fonts.GlyphPositioningTable;
+import org.apache.fop.complexscripts.fonts.GlyphPositioningTable.Value;
+import org.apache.fop.complexscripts.util.CharScript;
+import org.apache.fop.fonts.EmbedFontInfo;
+import org.apache.fop.fonts.EmbeddingMode;
+import org.apache.fop.fonts.EncodingMode;
+import org.apache.fop.fonts.FontTriplet;
+import org.apache.fop.fonts.FontUris;
+import org.apache.fop.fonts.LazyFont;
+import org.apache.fop.fonts.MultiByteFont;
+import org.apache.fop.traits.MinOptMax;
+import org.apache.fop.util.CharUtilities;
+import org.apache.xmlgraphics.io.Resource;
+import org.apache.xmlgraphics.io.ResourceResolver;
 
 /**
  * Provides glyph layout e.g. for accented Latin letters.
@@ -68,11 +88,15 @@ public class LayoutProcessor {
     private static final int DEFAULT_FLAGS = -1;
     private static final Map<BaseFont, java.awt.Font> awtFontMap = new ConcurrentHashMap<>();
 
+    private static final Map<BaseFont, LazyFont> fopFontMap = new ConcurrentHashMap<>();
+
     private static final Map<TextAttribute, Object> globalTextAttributes = new ConcurrentHashMap<>();
 
     // Static variables can only be set once
     private static boolean enabled = false;
     private static int flags = DEFAULT_FLAGS;
+
+    private static boolean useFOP = false;
 
     private LayoutProcessor() {
         throw new UnsupportedOperationException("static class");
@@ -83,7 +107,21 @@ public class LayoutProcessor {
      * <p>
      * Kerning and ligatures are switched off. This method can only be called once.
      */
+    public static void enableFop() {
+        useFOP = true;
+        enable();
+    }
+
+
+    /**
+     * Enables the processor.
+     * <p>
+     * Kerning and ligatures are switched off. This method can only be called once.
+     */
     public static void enable() {
+        if (enabled) {
+            throw new UnsupportedOperationException("LayoutProcessor is already enabled");
+        }
         enabled = true;
     }
 
@@ -95,9 +133,6 @@ public class LayoutProcessor {
      * @param flags see java.awt.Font.layoutGlyphVector
      */
     public static void enable(int flags) {
-        if (enabled) {
-            throw new UnsupportedOperationException("LayoutProcessor is already enabled");
-        }
         enable();
         LayoutProcessor.flags = flags;
     }
@@ -243,33 +278,27 @@ public class LayoutProcessor {
         if (!enabled) {
             return;
         }
+//        if (!useFOP) {
+        loadAwtFont(baseFont, filename);
+//        } else {
+        loadFopFont(baseFont, filename);
+//        }
+    }
 
+    /**
+     * Loads the AWT font needed for layout
+     *
+     * @param baseFont OpenPdf base font
+     * @param filename of the font file
+     * @throws RuntimeException if font can not be loaded
+     */
+    private static void loadAwtFont(BaseFont baseFont, String filename) {
         java.awt.Font awtFont;
         InputStream inputStream = null;
         try {
             awtFont = awtFontMap.get(baseFont);
             if (awtFont == null) {
-                // getting the inputStream is adapted from com.lowagie.text.pdf.RandomAccessFileOrArray
-                File file = new File(filename);
-                if (!file.exists() && FontFactory.isRegistered(filename)) {
-                    filename = (String) FontFactory.getFontImp().getFontPath(filename);
-                    file = new File(filename);
-                }
-                if (file.canRead()) {
-                    inputStream = Files.newInputStream(file.toPath());
-                } else if (filename.startsWith("file:/") || filename.startsWith("http://")
-                        || filename.startsWith("https://") || filename.startsWith("jar:")
-                        || filename.startsWith("wsjar:")) {
-                    inputStream = new URL(filename).openStream();
-                } else if ("-".equals(filename)) {
-                    inputStream = System.in;
-                } else {
-                    inputStream = BaseFont.getResourceStream(filename);
-                }
-                if (inputStream == null) {
-                    throw new IOException(
-                            MessageLocalization.getComposedMessage("1.not.found.as.file.or.resource", filename));
-                }
+                inputStream = getFontInputStream(filename);
                 awtFont = java.awt.Font.createFont(java.awt.Font.TRUETYPE_FONT, inputStream);
                 if (awtFont != null) {
                     if (!globalTextAttributes.isEmpty()) {
@@ -291,6 +320,103 @@ public class LayoutProcessor {
         }
     }
 
+    private static class FopResourceResolver implements ResourceResolver {
+
+        private final InputStream inputStream;
+
+        public FopResourceResolver(InputStream inputStream) {
+            this.inputStream = inputStream;
+        }
+
+        @Override
+        public Resource getResource(URI uri) throws IOException {
+            return new Resource(inputStream);
+        }
+
+        @Override
+        public OutputStream getOutputStream(URI uri) throws IOException {
+            return null;
+        }
+    }
+
+
+    /**
+     * Loads the FOP font needed for layout
+     *
+     * @param baseFont OpenPdf base font
+     * @param filename of the font file
+     * @throws RuntimeException if font can not be loaded
+     */
+    private static void loadFopFont(BaseFont baseFont, String filename) {
+        // TODO:
+        InputStream inputStream = null;
+        LazyFont fopFont = null;
+        try {
+            fopFont = fopFontMap.get(baseFont);
+            if (fopFont == null) {
+                inputStream = getFontInputStream(filename);
+                FopResourceResolver resourceResolver = new FopResourceResolver(inputStream);
+                InternalResourceResolver internalResolver =
+                        ResourceResolverFactory.createInternalResourceResolver(new URI(filename), resourceResolver);
+
+                FontUris fontUris = new FontUris(new URI(baseFont.getPostscriptFontName()), null);
+                boolean kerning = true;
+                boolean advanced = true;
+                FontTriplet fontTriplet = new FontTriplet();
+                List<FontTriplet> fontTriplets = new ArrayList<>();
+                fontTriplets.add(fontTriplet);
+
+                String subFontName = baseFont.getPostscriptFontName();
+                EncodingMode encodingMode = EncodingMode.AUTO;
+                EmbeddingMode embeddingMode = EmbeddingMode.AUTO;
+                boolean simulateStyle = false;
+                boolean embedAsType1 = false;
+                boolean useSVG = false;
+
+                EmbedFontInfo fontInfo = new EmbedFontInfo(fontUris, kerning, advanced, fontTriplets, subFontName,
+                        encodingMode, embeddingMode, simulateStyle, embedAsType1, useSVG);
+                boolean useComplexScripts = true;
+                fopFont = new LazyFont(fontInfo, internalResolver, useComplexScripts);
+
+                if (fopFont != null) {
+                    if (!globalTextAttributes.isEmpty()) {
+                        // TODO: Apply globalTextAttributes
+                        // Kerning, ligatures
+                        // awtFont = awtFont.deriveFont(LayoutProcessor.globalTextAttributes);
+                    }
+                    fopFontMap.put(baseFont, fopFont);
+                }
+            }
+        } catch (Exception e) {
+            throw new RuntimeException(String.format("Font creation failed for %s.", filename), e);
+        } finally {
+            // don't close inputStream, it is read later from LazyFont
+        }
+    }
+
+    private static InputStream getFontInputStream(String filename) throws IOException {
+        // getting the inputStream is adapted from com.lowagie.text.pdf.RandomAccessFileOrArray
+        InputStream inputStream;
+        File file = new File(filename);
+        if (!file.exists() && FontFactory.isRegistered(filename)) {
+            filename = (String) FontFactory.getFontImp().getFontPath(filename);
+            file = new File(filename);
+        }
+        if (file.canRead()) {
+            inputStream = Files.newInputStream(file.toPath());
+        } else if (filename.startsWith("file:/") || filename.startsWith("http://") || filename.startsWith("https://")
+                || filename.startsWith("jar:") || filename.startsWith("wsjar:")) {
+            inputStream = new URL(filename).openStream();
+        } else if ("-".equals(filename)) {
+            inputStream = System.in;
+        } else {
+            inputStream = BaseFont.getResourceStream(filename);
+        }
+        if (inputStream == null) {
+            throw new IOException(MessageLocalization.getComposedMessage("1.not.found.as.file.or.resource", filename));
+        }
+        return inputStream;
+    }
     /**
      * Computes glyph positioning
      *
@@ -299,6 +425,143 @@ public class LayoutProcessor {
      * @return glyph vector containing reordered text, width and positioning info
      */
     public static GlyphVector computeGlyphVector(BaseFont baseFont, float fontSize, String text) {
+        GlyphVector glyphVector = null;
+//        if(useFOP) {
+        glyphVector = awtComputeGlyphVector(baseFont, fontSize, text);
+//        } else {
+        fopComputeGlyphVector(baseFont, fontSize, text);
+//        }
+        return glyphVector;
+    }
+
+    /**
+     * Computes glyph positioning
+     *
+     * @param baseFont OpenPdf base font
+     * @param text     input text
+     * @return glyph vector containing reordered text, width and positioning info
+     */
+    public static GlyphVector fopComputeGlyphVector(BaseFont baseFont, float fontSize, String text) {
+        final char[] chars = text.toCharArray();
+
+        FontRenderContext fontRenderContext = new FontRenderContext(new AffineTransform(), false, true);
+        // specify fractional metrics to compute accurate positions
+
+        int localFlags = LayoutProcessor.flags;
+        if (localFlags == DEFAULT_FLAGS) {
+            AttributedString as = new AttributedString(text);
+            Bidi bidi = new Bidi(as.getIterator());
+            localFlags = bidi.isLeftToRight() ? java.awt.Font.LAYOUT_LEFT_TO_RIGHT : java.awt.Font.LAYOUT_RIGHT_TO_LEFT;
+        }
+        final LazyFont fopFont = LayoutProcessor.fopFontMap.get(baseFont);
+/*
+Adapted from org.apache.fop.fonts.GlyphMapping.doWordMapping;
+The Apache™ FOP Project
+https://www.apache.org/licenses/LICENSE-2.0
+ */
+        //   int nLS = 0; // # of letter spaces
+        String script = null; //text.getScript();
+        String language = null; //text.getLanguage();
+
+        // 2. if script is not specified (by FO property) or it is specified as 'auto',
+        // then compute dominant script.
+        if ((script == null) || "auto".equals(script)) {
+            script = CharScript.scriptTagFromCode(CharScript.dominantScript(text));
+        }
+        if ((language == null) || "none".equals(language)) {
+            language = "dflt";
+        }
+
+        // 3. perform mapping of chars to glyphs ... to glyphs ... to chars, retaining
+        // associations if requested.
+        final List associations = new ArrayList();
+
+        // This is a workaround to read the ligature from the font even if the script
+        // does not match the one defined for the table.
+        // More info here: https://issues.apache.org/jira/browse/FOP-2638
+        // zyyy == SCRIPT_UNDEFINED
+        if ("zyyy".equals(script) || "auto".equals(script)) {
+            script = "*";
+        }
+
+        final CharSequence substitutedGlyphs = fopFont.performSubstitution(text, script, language, associations, false);
+
+        // 4. compute glyph position adjustments on (substituted) characters.
+        final int[][] adjustments = fopFont.performsPositioning() ?
+                fopFont.performPositioning(substitutedGlyphs, script, language): null;
+
+/*
+            if (useKerningAdjustments(fopFont, script, language)) {
+                // handle standard (non-GPOS) kerning adjustments
+                gpa = getKerningAdjustments(mcs, font, gpa);
+            }
+*/
+        // 5. reorder combining marks so that they precede (within the mapped char sequence) the
+        // base to which they are applied; N.B. position adjustments are reordered in place.
+        final CharSequence  reorderedGlyphs = fopFont.reorderCombiningMarks(substitutedGlyphs, adjustments, script, language, associations);
+
+        // 6. compute word ipd based on final position adjustments.
+        MinOptMax ipd = MinOptMax.ZERO;
+
+        final int[] widths = new int[reorderedGlyphs.length()];
+        // The gpa array is sized by code point count
+        for (int i = 0, cpi = 0, n = reorderedGlyphs.length(); i < n; i++, cpi++) {
+            int c = reorderedGlyphs.charAt(i);
+            int cidSubsetGlyphIndex = fopFont.mapChar((char)c);
+
+            if (CharUtilities.containsSurrogatePairAt(reorderedGlyphs, i)) {
+                c = Character.toCodePoint((char) c, reorderedGlyphs. charAt(++i));
+                fopFont.mapChar((char)c);
+                // XXX
+            }
+            widths[i] = fopFont.getWidth(cidSubsetGlyphIndex, (int)fontSize);
+            if (widths[i] < 0) {
+                widths[i] = 0;
+            }
+            if (adjustments != null) {
+                widths[i] += adjustments[cpi][GlyphPositioningTable.Value.IDX_X_ADVANCE];
+            }
+            ipd = ipd.plus(widths[i]);
+        }
+/*
+        public static final int IDX_X_PLACEMENT = 0;
+        public static final int IDX_Y_PLACEMENT = 1;
+        public static final int IDX_X_ADVANCE = 2;
+        public static final int IDX_Y_ADVANCE = 3;
+*/
+        System.out.printf("fopComputeGlyphVector 2  dx dy dax day w  -- reordered \n");
+        for (int i = 0; i < reorderedGlyphs.length(); i++) {
+            char ci = reorderedGlyphs.charAt(i);
+            System.out.printf("fopComputeGlyphVector i=%d c=%h",
+                    i, ci);
+
+            int glyph = ((MultiByteFont)fopFont.getRealFont()).findGlyphIndex((int)ci); // XXX Cast möglich?
+            System.out.printf(" glyph=%d", glyph);
+            //public int mapCodePoint(int cp) // XXX
+
+
+            if (adjustments != null) {
+                System.out.printf(" xp=%d yp=%d xa=%d ya=%d",
+                        adjustments[i][Value.IDX_X_PLACEMENT],
+                        adjustments[i][Value.IDX_Y_PLACEMENT],
+                        adjustments[i][Value.IDX_X_ADVANCE],
+                        adjustments[i][Value.IDX_Y_ADVANCE]);
+            } else {
+                System.out.printf(" adjustments null");
+            }
+            System.out.printf(" w=%d\n", widths[i]);
+        }
+        return null; //(glyphs, adjustments, widths);
+    }
+
+    /**
+     * Computes glyph positioning
+     *
+     * @param baseFont OpenPdf base font
+     * @param text     input text
+     * @return glyph vector containing reordered text, width and positioning info
+     */
+    public static GlyphVector awtComputeGlyphVector(BaseFont baseFont, float fontSize, String text) {
         char[] chars = text.toCharArray();
 
         FontRenderContext fontRenderContext = new FontRenderContext(new AffineTransform(), false, true);
@@ -321,6 +584,7 @@ public class LayoutProcessor {
         }
         return awtFont.layoutGlyphVector(fontRenderContext, chars, 0, chars.length, localFlags);
     }
+
 
     /**
      * Checks if the glyphVector contains adjustments that make advanced layout necessary
@@ -362,6 +626,23 @@ public class LayoutProcessor {
      */
     public static Point2D showText(PdfContentByte cb, BaseFont baseFont, float fontSize, String text) {
         GlyphVector glyphVector = computeGlyphVector(baseFont, fontSize, text);
+
+        System.out.print("chars: ");
+        for (char c: text.toCharArray()) {
+            System.out.printf("%04x ", (int)c);
+        }
+        System.out.println();
+        System.out.println("glyphVector.getNumGlyphs()="+glyphVector.getNumGlyphs());
+        System.out.printf("glyphs: ");
+        for (int g: glyphVector.getGlyphCodes(0, glyphVector.getNumGlyphs(), null)) {
+            System.out.printf("%d ", g);
+        }
+        System.out.println();
+        int[] charIndizes = glyphVector.getGlyphCharIndices(0, glyphVector.getNumGlyphs(), null);
+        //for (int ci: charIndizes) {
+        //     System.out.println("charIndizes="+ci);
+        //}
+
         if (!hasAdjustments(glyphVector)) {
             cb.showText(glyphVector);
             Point2D p = glyphVector.getGlyphPosition(glyphVector.getNumGlyphs());
@@ -398,5 +679,6 @@ public class LayoutProcessor {
         flags = DEFAULT_FLAGS;
         awtFontMap.clear();
         globalTextAttributes.clear();
+        useFOP = false;
     }
 }
