@@ -554,6 +554,107 @@ https://www.apache.org/licenses/LICENSE-2.0
         return null; //(glyphs, adjustments, widths);
     }
 
+    interface SimpleGlyphVector {
+
+        boolean hasAdjustments();
+
+        Adjustments getAdjustments(int i);
+
+        int[] getGlyphCodes();
+
+        char[] getCharacters();
+    }
+    static class Adjustments {
+        private final double positionX;
+        private final double positionY;
+        private final double advanceX;
+        private final double advanceY;
+        public Adjustments(double positionX, double positionY, double advanceX, double advanceY) {
+            this.positionX = positionX;
+            this.positionY = positionY;
+            this.advanceX = advanceX;
+            this.advanceY = advanceY;
+        }
+        double getPositionX() {
+            return positionX;
+        }
+        double getPositionY() {
+            return positionY;
+        }
+        double getAdvanceX() {
+            return  advanceX;
+        }
+        double getAdvanceY() {
+            return advanceY;
+        }
+    }
+
+    static class SimpleAwtGlyphVector implements SimpleGlyphVector {
+        private final GlyphVector awtGlyphVector;
+
+        public SimpleAwtGlyphVector(GlyphVector awtGlyphVector) {
+            this.awtGlyphVector = awtGlyphVector;
+        }
+        public Adjustments getAdjustments(int i) {
+            return new Adjustments(awtGlyphVector.getGlyphPosition(i).getX(),
+                    awtGlyphVector.getGlyphPosition(i).getY(),
+                    awtGlyphVector.getGlyphMetrics(i).getAdvanceX(),
+                    awtGlyphVector.getGlyphMetrics(i).getAdvanceX());
+        }
+
+        @Override
+        public int[] getGlyphCodes() {
+            return awtGlyphVector.getGlyphCodes(0, awtGlyphVector.getNumGlyphs() - 1, null);
+        }
+
+        @Override
+        public char[] getCharacters() {
+            return null; // charactes nur bei FOP
+        }
+
+        @Override
+        public boolean hasAdjustments() {
+            return (GlyphVector.FLAG_HAS_POSITION_ADJUSTMENTS & awtGlyphVector.getLayoutFlags()) != 0;
+        }
+    }
+    static class SimpleFopGlyphVector implements SimpleGlyphVector {
+        private final GlyphVector awtGlyphVector;
+        private final int[][] adjustments;
+        private final CharSequence glyphsAsChar;
+
+        public SimpleAwtGlyphVector(int[][] adjustments, CharSequence glyphsAsChar)  {
+            this.adjustments = adjustments;
+            this.glyphsAsChar = glyphsAsChar;
+
+
+        }
+        public Adjustments getAdjustments(int i) {
+            adjustments[i][Value.IDX_X_PLACEMENT],
+                    adjustments[i][Value.IDX_Y_PLACEMENT],
+                    adjustments[i][Value.IDX_X_ADVANCE],
+                    adjustments[i][Value.IDX_Y_ADVANCE]);
+
+            return new Adjustments(awtGlyphVector.getGlyphPosition(i).getX(),
+                    awtGlyphVector.getGlyphPosition(i).getY(),
+                    awtGlyphVector.getGlyphMetrics(i).getAdvanceX(),
+                    awtGlyphVector.getGlyphMetrics(i).getAdvanceX());
+        }
+
+        @Override
+        public int[] getGlyphCodes() {
+            return awtGlyphVector.getGlyphCodes(0, awtGlyphVector.getNumGlyphs() - 1, null);
+        }
+
+        @Override
+        public char[] getCharacters() {
+            return null; // charactes nur bei FOP
+        }
+
+        @Override
+        public boolean hasAdjustments() {
+            return (GlyphVector.FLAG_HAS_POSITION_ADJUSTMENTS & awtGlyphVector.getLayoutFlags()) != 0;
+        }
+    }
     /**
      * Computes glyph positioning
      *
