@@ -424,12 +424,12 @@ public class LayoutProcessor {
      * @param text     input text
      * @return glyph vector containing reordered text, width and positioning info
      */
-    public static GlyphVector computeGlyphVector(BaseFont baseFont, float fontSize, String text) {
-        GlyphVector glyphVector = null;
+    public static SimpleGlyphVector computeGlyphVector(BaseFont baseFont, float fontSize, String text) {
+        SimpleGlyphVector glyphVector = null;
 //        if(useFOP) {
         glyphVector = awtComputeGlyphVector(baseFont, fontSize, text);
 //        } else {
-        fopComputeGlyphVector(baseFont, fontSize, text);
+        SimpleGlyphVector glyphVector2 = fopComputeGlyphVector(baseFont, fontSize, text);
 //        }
         return glyphVector;
     }
@@ -441,7 +441,7 @@ public class LayoutProcessor {
      * @param text     input text
      * @return glyph vector containing reordered text, width and positioning info
      */
-    public static GlyphVector fopComputeGlyphVector(BaseFont baseFont, float fontSize, String text) {
+    public static SimpleGlyphVector fopComputeGlyphVector(BaseFont baseFont, float fontSize, String text) {
         final char[] chars = text.toCharArray();
 
         FontRenderContext fontRenderContext = new FontRenderContext(new AffineTransform(), false, true);
@@ -488,7 +488,7 @@ https://www.apache.org/licenses/LICENSE-2.0
 
         // 4. compute glyph position adjustments on (substituted) characters.
         final int[][] adjustments = fopFont.performsPositioning() ?
-                fopFont.performPositioning(substitutedGlyphs, script, language): null;
+                fopFont.performPositioning(substitutedGlyphs, script, language) : null;
 
 /*
             if (useKerningAdjustments(fopFont, script, language)) {
@@ -498,23 +498,25 @@ https://www.apache.org/licenses/LICENSE-2.0
 */
         // 5. reorder combining marks so that they precede (within the mapped char sequence) the
         // base to which they are applied; N.B. position adjustments are reordered in place.
-        final CharSequence  reorderedGlyphs = fopFont.reorderCombiningMarks(substitutedGlyphs, adjustments, script, language, associations);
+        final CharSequence reorderedGlyphs = fopFont.reorderCombiningMarks(substitutedGlyphs, adjustments, script,
+                language, associations);
 
         // 6. compute word ipd based on final position adjustments.
         MinOptMax ipd = MinOptMax.ZERO;
 
         final int[] widths = new int[reorderedGlyphs.length()];
+        final int[] cidSubsetGlyphIndices = new int[reorderedGlyphs.length()];
         // The gpa array is sized by code point count
         for (int i = 0, cpi = 0, n = reorderedGlyphs.length(); i < n; i++, cpi++) {
             int c = reorderedGlyphs.charAt(i);
-            int cidSubsetGlyphIndex = fopFont.mapChar((char)c);
+            cidSubsetGlyphIndices[i] = fopFont.mapChar((char) c);
 
             if (CharUtilities.containsSurrogatePairAt(reorderedGlyphs, i)) {
-                c = Character.toCodePoint((char) c, reorderedGlyphs. charAt(++i));
-                fopFont.mapChar((char)c);
+                c = Character.toCodePoint((char) c, reorderedGlyphs.charAt(++i));
+                fopFont.mapChar((char) c);
                 // XXX
             }
-            widths[i] = fopFont.getWidth(cidSubsetGlyphIndex, (int)fontSize);
+            widths[i] = fopFont.getWidth(cidSubsetGlyphIndices[i], (int) fontSize);
             if (widths[i] < 0) {
                 widths[i] = 0;
             }
@@ -530,15 +532,16 @@ https://www.apache.org/licenses/LICENSE-2.0
         public static final int IDX_Y_ADVANCE = 3;
 */
         System.out.printf("fopComputeGlyphVector 2  dx dy dax day w  -- reordered \n");
+        int[] glyphIndices =new int[reorderedGlyphs.length()];
         for (int i = 0; i < reorderedGlyphs.length(); i++) {
             char ci = reorderedGlyphs.charAt(i);
             System.out.printf("fopComputeGlyphVector i=%d c=%h",
                     i, ci);
 
-            int glyph = ((MultiByteFont)fopFont.getRealFont()).findGlyphIndex((int)ci); // XXX Cast möglich?
-            System.out.printf(" glyph=%d", glyph);
-            //public int mapCodePoint(int cp) // XXX
 
+            glyphIndices[i]  = ((MultiByteFont) fopFont.getRealFont()).findGlyphIndex((int) ci); // XXX Cast möglich?
+            System.out.printf(" glyph=%d", glyphIndices[i]);
+            //public int mapCodePoint(int cp) // XXX
 
             if (adjustments != null) {
                 System.out.printf(" xp=%d yp=%d xa=%d ya=%d",
@@ -551,7 +554,10 @@ https://www.apache.org/licenses/LICENSE-2.0
             }
             System.out.printf(" w=%d\n", widths[i]);
         }
-        return null; //(glyphs, adjustments, widths);
+        SimpleGlyphVector simpleFopGlyphVector = new SimpleFopGlyphVector(adjustments, reorderedGlyphs,
+                cidSubsetGlyphIndices, glyphIndices, widths);
+
+        return simpleFopGlyphVector;
     }
 
     interface SimpleGlyphVector {
@@ -562,7 +568,6 @@ https://www.apache.org/licenses/LICENSE-2.0
 
         int[] getGlyphCodes();
 
-        char[] getCharacters();
     }
     static class Adjustments {
         private final double positionX;
@@ -608,51 +613,47 @@ https://www.apache.org/licenses/LICENSE-2.0
         }
 
         @Override
-        public char[] getCharacters() {
-            return null; // charactes nur bei FOP
-        }
-
-        @Override
         public boolean hasAdjustments() {
             return (GlyphVector.FLAG_HAS_POSITION_ADJUSTMENTS & awtGlyphVector.getLayoutFlags()) != 0;
         }
     }
     static class SimpleFopGlyphVector implements SimpleGlyphVector {
-        private final GlyphVector awtGlyphVector;
         private final int[][] adjustments;
         private final CharSequence glyphsAsChar;
 
-        public SimpleAwtGlyphVector(int[][] adjustments, CharSequence glyphsAsChar)  {
+        private final int[] cidSubsetGlyphIndices;
+        private final int[] glyphCodes;
+        private final int[] widths;
+
+        public SimpleFopGlyphVector(int[][] adjustments, CharSequence glyphsAsChar, int[] cidSubsetGlyphIndices,
+                int[] glyphIndices, int[] widths) {
             this.adjustments = adjustments;
             this.glyphsAsChar = glyphsAsChar;
-
-
+            this.cidSubsetGlyphIndices = cidSubsetGlyphIndices;
+            this.glyphCodes = glyphIndices;
+            this.widths = widths;
         }
         public Adjustments getAdjustments(int i) {
-            adjustments[i][Value.IDX_X_PLACEMENT],
+            return new Adjustments(
+                    adjustments[i][Value.IDX_X_PLACEMENT],
                     adjustments[i][Value.IDX_Y_PLACEMENT],
                     adjustments[i][Value.IDX_X_ADVANCE],
                     adjustments[i][Value.IDX_Y_ADVANCE]);
-
-            return new Adjustments(awtGlyphVector.getGlyphPosition(i).getX(),
-                    awtGlyphVector.getGlyphPosition(i).getY(),
-                    awtGlyphVector.getGlyphMetrics(i).getAdvanceX(),
-                    awtGlyphVector.getGlyphMetrics(i).getAdvanceX());
         }
 
         @Override
         public int[] getGlyphCodes() {
-            return awtGlyphVector.getGlyphCodes(0, awtGlyphVector.getNumGlyphs() - 1, null);
+            return glyphCodes;
         }
 
-        @Override
-        public char[] getCharacters() {
-            return null; // charactes nur bei FOP
+        public CharSequence getCharacters() {
+            return glyphsAsChar;
         }
+
 
         @Override
         public boolean hasAdjustments() {
-            return (GlyphVector.FLAG_HAS_POSITION_ADJUSTMENTS & awtGlyphVector.getLayoutFlags()) != 0;
+            return adjustments != null;
         }
     }
     /**
@@ -662,7 +663,7 @@ https://www.apache.org/licenses/LICENSE-2.0
      * @param text     input text
      * @return glyph vector containing reordered text, width and positioning info
      */
-    public static GlyphVector awtComputeGlyphVector(BaseFont baseFont, float fontSize, String text) {
+    public static SimpleGlyphVector awtComputeGlyphVector(BaseFont baseFont, float fontSize, String text) {
         char[] chars = text.toCharArray();
 
         FontRenderContext fontRenderContext = new FontRenderContext(new AffineTransform(), false, true);
@@ -683,7 +684,8 @@ https://www.apache.org/licenses/LICENSE-2.0
                         java.awt.Font.LAYOUT_RIGHT_TO_LEFT;
             }
         }
-        return awtFont.layoutGlyphVector(fontRenderContext, chars, 0, chars.length, localFlags);
+        return new SimpleAwtGlyphVector(awtFont.layoutGlyphVector(fontRenderContext, chars, 0, chars.length,
+                localFlags));
     }
 
 
@@ -726,7 +728,7 @@ https://www.apache.org/licenses/LICENSE-2.0
      * @return layout position correction to correct the start of the next line
      */
     public static Point2D showText(PdfContentByte cb, BaseFont baseFont, float fontSize, String text) {
-        GlyphVector glyphVector = computeGlyphVector(baseFont, fontSize, text);
+        SimpleGlyphVector glyphVector = computeGlyphVector(baseFont, fontSize, text);
 
         System.out.print("chars: ");
         for (char c: text.toCharArray()) {
