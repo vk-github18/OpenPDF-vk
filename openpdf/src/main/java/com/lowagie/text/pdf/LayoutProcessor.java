@@ -93,7 +93,7 @@ public class LayoutProcessor {
     private static final int DEFAULT_FLAGS = -1;
     private static final Map<BaseFont, java.awt.Font> awtFontMap = new ConcurrentHashMap<>();
 
-    private static final Map<BaseFont, LazyFont> fopFontMap = new ConcurrentHashMap<>();
+    private static final Map<BaseFont, MultiByteFont> fopFontMap = new ConcurrentHashMap<>();
 
     private static final Map<TextAttribute, Object> globalTextAttributes = new ConcurrentHashMap<>();
 
@@ -335,7 +335,7 @@ public class LayoutProcessor {
     private static void loadFopFont(BaseFont baseFont, String filename) {
         // TODO:
         InputStream inputStream = null;
-        LazyFont fopFont = null;
+        MultiByteFont fopFont = null;
         try {
             fopFont = fopFontMap.get(baseFont);
             if (fopFont == null) {
@@ -361,15 +361,14 @@ public class LayoutProcessor {
                 EmbedFontInfo fontInfo = new EmbedFontInfo(fontUris, kerning, advanced, fontTriplets, subFontName,
                         encodingMode, embeddingMode, simulateStyle, embedAsType1, useSVG);
                 boolean useComplexScripts = true;
-                fopFont = new LazyFont(fontInfo, internalResolver, useComplexScripts);
+                LazyFont lazyFont = new LazyFont(fontInfo, internalResolver, useComplexScripts);
 
-                if (fopFont != null) {
+                if (lazyFont != null) {
                     if (!globalTextAttributes.isEmpty()) {
                         // TODO: Apply globalTextAttributes
                         // Kerning, ligatures
-                        // awtFont = awtFont.deriveFont(LayoutProcessor.globalTextAttributes);
                     }
-                    fopFontMap.put(baseFont, fopFont);
+                    fopFontMap.put(baseFont, (MultiByteFont)(lazyFont.getRealFont()));
                 }
             }
         } catch (Exception e) {
@@ -437,7 +436,8 @@ public class LayoutProcessor {
             Bidi bidi = new Bidi(as.getIterator());
             localFlags = bidi.isLeftToRight() ? java.awt.Font.LAYOUT_LEFT_TO_RIGHT : java.awt.Font.LAYOUT_RIGHT_TO_LEFT;
         }
-        final LazyFont fopFont = LayoutProcessor.fopFontMap.get(baseFont);
+        final MultiByteFont fopFont = LayoutProcessor.fopFontMap.get(baseFont);
+
 /*
 Adapted from org.apache.fop.fonts.GlyphMapping.doWordMapping;
 The Apache™ FOP Project
@@ -468,11 +468,15 @@ https://www.apache.org/licenses/LICENSE-2.0
             script = "*";
         }
 
-        final CharSequence substitutedGlyphs = fopFont.performSubstitution(text, script, language, associations, false);
+        final CharSequence substitutedGlyphs = fopFont.performSubstitution(text, script, language, associations, true);
 
         // 4. compute glyph position adjustments on (substituted) characters.
         final int[][] adjustments =
-                fopFont.performsPositioning() ? fopFont.performPositioning(substitutedGlyphs, script, language) : null;
+                fopFont.performsPositioning() ? fopFont.performPositioning(substitutedGlyphs, script, language,
+                        (int)fontSize) :
+                        null;
+        // XXX MultiByteFont 465: getUnscaledWidth(gs) statt this.width?
+        // Wie sieht das mit demselben Textbeispiel in FOP aus?
 
 /*
             if (useKerningAdjustments(fopFont, script, language)) {
@@ -508,7 +512,13 @@ https://www.apache.org/licenses/LICENSE-2.0
                 widths[i] += adjustments[cpi][GlyphPositioningTable.Value.IDX_X_ADVANCE];
             }
             ipd = ipd.plus(widths[i]);
+
         }
+        int total_width = 0;
+        for (int w: widths) {
+            total_width += w;
+        }
+
 /*
         public static final int IDX_X_PLACEMENT = 0;
         public static final int IDX_Y_PLACEMENT = 1;
@@ -521,7 +531,7 @@ https://www.apache.org/licenses/LICENSE-2.0
             char ci = reorderedGlyphs.charAt(i);
             System.out.printf("fopComputeGlyphVector i=%d c=%h", i, ci);
 
-            glyphIndices[i] = ((MultiByteFont) fopFont.getRealFont()).findGlyphIndex(ci); // XXX Cast möglich?
+            glyphIndices[i] = fopFont.findGlyphIndex(ci); // XXX Cast möglich?
             System.out.printf(" glyph=%d", glyphIndices[i]);
             //public int mapCodePoint(int cp) // XXX
 
@@ -535,7 +545,7 @@ https://www.apache.org/licenses/LICENSE-2.0
             System.out.printf(" w=%d\n", widths[i]);
         }
         GlyphVector fopGlyphVector = new FopGlyphVector(adjustments, reorderedGlyphs, cidSubsetGlyphIndices,
-                glyphIndices, associations, widths);
+                glyphIndices, associations, widths, total_width);
 
         return fopGlyphVector;
     }
@@ -709,15 +719,17 @@ https://www.apache.org/licenses/LICENSE-2.0
         private final int[] glyphCodes;
         private final List associations;
         private final int[] widths;
+        private final int total_width;
 
         public FopGlyphVector(int[][] adjustments, CharSequence glyphsAsChar, int[] cidSubsetGlyphIndices,
-                int[] glyphIndices, List associations, int[] widths) {
+                int[] glyphIndices, List associations, int[] widths, int total_width) {
             this.adjustments = adjustments;
             this.glyphsAsChar = glyphsAsChar;
             this.cidSubsetGlyphIndices = cidSubsetGlyphIndices;
             this.glyphCodes = glyphIndices;
             this.associations = associations;
             this.widths = widths;
+            this.total_width = total_width;
         }
 
         public boolean hasAdjustments() {
@@ -798,9 +810,13 @@ https://www.apache.org/licenses/LICENSE-2.0
 
         @Override
         public Point2D getGlyphPosition(int glyphIndex) {
-            Point2D p = new Point2D.Double(adjustments[glyphIndex][Value.IDX_X_PLACEMENT],
-                    adjustments[glyphIndex][Value.IDX_Y_PLACEMENT]);
-            return p;
+            if (glyphIndex < glyphCodes.length) {
+                Point2D p = new Point2D.Double(adjustments[glyphIndex][Value.IDX_X_PLACEMENT],
+                        adjustments[glyphIndex][Value.IDX_Y_PLACEMENT]);
+                return p;
+            } else {
+                return new Point2D.Double(total_width, 0);
+            }
         }
 
         @Override
