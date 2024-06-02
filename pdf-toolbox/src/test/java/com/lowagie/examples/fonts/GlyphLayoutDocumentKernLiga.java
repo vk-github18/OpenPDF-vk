@@ -70,8 +70,9 @@ public class GlyphLayoutDocumentKernLiga {
             PdfWriter writer = PdfWriter.getInstance(document, Files.newOutputStream(Paths.get(fileName)));
             writer.setInitialLeading(16.0f);
             document.open();
-            document.add(new Chunk(INTRO_TEXT + "Font: Noto Serif Regular\n\n", notoSerif));
-            document.add(new Chunk(TEST_TEXT, notoSerif));
+            document.add(new Chunk("Test", notoSerif));
+           // document.add(new Chunk(INTRO_TEXT + "Font: Noto Serif Regular\n\n", notoSerif));
+           // document.add(new Chunk(TEST_TEXT, notoSerif));
         }
         LayoutProcessor.disable();
     }

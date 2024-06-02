@@ -46,6 +46,7 @@ package com.lowagie.text.pdf;
 import com.lowagie.text.FontFactory;
 import com.lowagie.text.error_messages.MessageLocalization;
 import java.awt.Font;
+import java.awt.Rectangle;
 import java.awt.Shape;
 import java.awt.font.FontRenderContext;
 import java.awt.font.GlyphJustificationInfo;
@@ -74,6 +75,7 @@ import org.apache.fop.apps.io.ResourceResolverFactory;
 import org.apache.fop.complexscripts.fonts.GlyphPositioningTable;
 import org.apache.fop.complexscripts.fonts.GlyphPositioningTable.Value;
 import org.apache.fop.complexscripts.util.CharScript;
+import org.apache.fop.complexscripts.util.GlyphSequence;
 import org.apache.fop.fonts.EmbedFontInfo;
 import org.apache.fop.fonts.EmbeddingMode;
 import org.apache.fop.fonts.EncodingMode;
@@ -357,7 +359,7 @@ public class LayoutProcessor {
                 EmbeddingMode embeddingMode = EmbeddingMode.AUTO;
                 boolean simulateStyle = false;
                 boolean embedAsType1 = false;
-                boolean useSVG = false;
+                boolean useSVG = true;
 
                 EmbedFontInfo fontInfo = new EmbedFontInfo(fontUris, kerning, advanced, fontTriplets, subFontName,
                         encodingMode, embeddingMode, simulateStyle, embedAsType1, useSVG);
@@ -413,9 +415,10 @@ public class LayoutProcessor {
 //        if(useFOP) {
         glyphVector = awtComputeGlyphVector(baseFont, fontSize, text);
 //        } else {
-        GlyphVector glyphVectorFop = fopComputeGlyphVector(baseFont, fontSize, text);
+        GlyphVector glyphVectorFop = fopComputeGlyphVector(baseFont, (int)(fontSize*1000), text);
 //        }
         return glyphVectorFop;
+        // XXX Test mit FOP Text: "Test" Font NotoSerif-Regular hb-shape
     }
 
     /**
@@ -425,7 +428,7 @@ public class LayoutProcessor {
      * @param text     input text
      * @return glyph vector containing reordered text, width and positioning info
      */
-    public static GlyphVector fopComputeGlyphVector(BaseFont baseFont, float fontSize, String text) {
+    public static GlyphVector fopComputeGlyphVector(BaseFont baseFont, int fontSize1000, String text) {
         final char[] chars = text.toCharArray();
 
         FontRenderContext fontRenderContext = new FontRenderContext(new AffineTransform(), false, true);
@@ -474,7 +477,7 @@ https://www.apache.org/licenses/LICENSE-2.0
         // 4. compute glyph position adjustments on (substituted) characters.
         final int[][] adjustments =
                 fopFont.performsPositioning() ? fopFont.performPositioning(substitutedGlyphs, script, language,
-                        (int)fontSize) :
+                        (int)fontSize1000) :
                         null;
         // XXX MultiByteFont 465: getUnscaledWidth(gs) statt this.width?
         // Wie sieht das mit demselben Textbeispiel in FOP aus?
@@ -505,7 +508,10 @@ https://www.apache.org/licenses/LICENSE-2.0
                 fopFont.mapChar((char) c);
                 // XXX
             }
-            widths[i] = fopFont.getWidth(cidSubsetGlyphIndices[i], (int) fontSize);
+            // XXX Compute positions from adjustments, see fop/PDFPainter/drawTextWithDP
+            // XXX Or layout with adjustments, not positions ... siehe aktuellen Branch ...
+            widths[i] = fopFont.getWidth(cidSubsetGlyphIndices[i], (int) fontSize1000); // XXX Ist das hier die richtige
+            // Breite
             if (widths[i] < 0) {
                 widths[i] = 0;
             }
@@ -549,6 +555,179 @@ https://www.apache.org/licenses/LICENSE-2.0
                 glyphIndices, associations, widths, total_width);
 
         return fopGlyphVector;
+    }
+
+    static class AwtGlyphVector extends java.awt.font.GlyphVector {
+
+        private final GlyphVector glyphVector;
+
+        public AwtGlyphVector(GlyphVector glyphVector) {
+            this.glyphVector = glyphVector;
+        }
+
+        @Override
+        public Font getFont() {
+            return glyphVector.getFont();
+        }
+
+        @Override
+        public FontRenderContext getFontRenderContext() {
+            return glyphVector.getFontRenderContext();
+        }
+
+        @Override
+        public void performDefaultLayout() {
+            glyphVector.performDefaultLayout();
+        }
+
+        @Override
+        public int getNumGlyphs() {
+            return glyphVector.getNumGlyphs();
+        }
+
+        @Override
+        public int getGlyphCode(int glyphIndex) {
+            return glyphVector.getGlyphCode(glyphIndex);
+        }
+
+        @Override
+        public int[] getGlyphCodes(int beginGlyphIndex, int numEntries, int[] codeReturn) {
+            return glyphVector.getGlyphCodes(beginGlyphIndex, numEntries, codeReturn);
+        }
+
+        @Override
+        public Rectangle2D getLogicalBounds() {
+            return glyphVector.getLogicalBounds();
+        }
+
+        @Override
+        public Rectangle2D getVisualBounds() {
+            return glyphVector.getVisualBounds();
+        }
+
+        @Override
+        public Shape getOutline() {
+            return glyphVector.getOutline();
+        }
+
+        @Override
+        public Shape getOutline(float x, float y) {
+            return glyphVector.getOutline(x, y);
+        }
+
+        @Override
+        public Shape getGlyphOutline(int glyphIndex) {
+            return glyphVector.getGlyphOutline(glyphIndex);
+        }
+
+        @Override
+        public Point2D getGlyphPosition(int glyphIndex) {
+            return glyphVector.getGlyphPosition(glyphIndex);
+        }
+
+        @Override
+        public void setGlyphPosition(int glyphIndex, Point2D newPos) {
+            glyphVector.setGlyphPosition(glyphIndex, newPos);
+        }
+
+        @Override
+        public AffineTransform getGlyphTransform(int glyphIndex) {
+            return glyphVector.getGlyphTransform(glyphIndex);
+        }
+
+        @Override
+        public void setGlyphTransform(int glyphIndex, AffineTransform newTX) {
+            glyphVector.setGlyphTransform(glyphIndex, newTX);
+        }
+
+        @Override
+        public float[] getGlyphPositions(int beginGlyphIndex, int numEntries, float[] positionReturn) {
+            return glyphVector.getGlyphPositions(beginGlyphIndex, numEntries, positionReturn);
+        }
+
+        @Override
+        public Shape getGlyphLogicalBounds(int glyphIndex) {
+            return glyphVector.getGlyphLogicalBounds(glyphIndex);
+        }
+
+        @Override
+        public Shape getGlyphVisualBounds(int glyphIndex) {
+            return glyphVector.getGlyphVisualBounds(glyphIndex);
+        }
+
+        @Override
+        public GlyphMetrics getGlyphMetrics(int glyphIndex) {
+            return glyphVector.getGlyphMetrics(glyphIndex);
+        }
+
+        @Override
+        public GlyphJustificationInfo getGlyphJustificationInfo(int glyphIndex) {
+            return glyphVector.getGlyphJustificationInfo(glyphIndex);
+        }
+
+        @Override
+        public boolean equals(GlyphVector set) {
+            return glyphVector.equals(set);
+        }
+
+        @Override
+        public int getGlyphCharIndex(int glyphIndex) {
+            return glyphVector.getGlyphCharIndex(glyphIndex);
+        }
+
+        @Override
+        public int[] getGlyphCharIndices(int beginGlyphIndex, int numEntries, int[] codeReturn) {
+            return glyphVector.getGlyphCharIndices(beginGlyphIndex, numEntries, codeReturn);
+        }
+
+        @Override
+        public Rectangle getPixelBounds(FontRenderContext renderFRC, float x, float y) {
+            return glyphVector.getPixelBounds(renderFRC, x, y);
+        }
+
+        @Override
+        public Shape getGlyphOutline(int glyphIndex, float x, float y) {
+            return glyphVector.getGlyphOutline(glyphIndex, x, y);
+        }
+
+        @Override
+        public int getLayoutFlags() {
+            return glyphVector.getLayoutFlags();
+        }
+
+        @Override
+        public Rectangle getGlyphPixelBounds(int index, FontRenderContext renderFRC, float x, float y) {
+            return glyphVector.getGlyphPixelBounds(index, renderFRC, x, y);
+        }
+
+        public double[][] getAdjustments() {
+            /*
+            public static final int IDX_X_PLACEMENT = 0;
+            public static final int IDX_Y_PLACEMENT = 1;
+            public static final int IDX_X_ADVANCE = 2;
+            public static final int IDX_Y_ADVANCE = 3;
+            */
+
+            double[][] adjustments = new double[glyphVector.getNumGlyphs()][4];
+
+            double lastX = 0.0;
+            double lastY = 0.0;
+
+            for (int i = 0; i < glyphVector.getNumGlyphs(); i++) {
+                Point2D p = glyphVector.getGlyphPosition(i);
+
+                adjustments[i][Value.IDX_X_PLACEMENT] = p.getX() - lastX;
+                adjustments[i][Value.IDX_Y_PLACEMENT] = p.getY() - lastY;
+
+                lastX = p.getX();
+                lastY = p.getY();
+            }
+            Point2D p = glyphVector.getGlyphPosition(glyphVector.getNumGlyphs());
+            adjustments[glyphVector.getNumGlyphs()][Value.IDX_X_ADVANCE] = p.getX() - lastX;
+            adjustments[glyphVector.getNumGlyphs()][Value.IDX_Y_ADVANCE] = p.getY() - lastY;
+
+            return adjustments;
+        }
     }
 
     /**
@@ -863,6 +1042,20 @@ https://www.apache.org/licenses/LICENSE-2.0
         @Override
         public boolean equals(GlyphVector set) {
             return false;
+        }
+
+        public double[][] getAdjustments() {
+            double[][] doubleAdjustments = new double[getNumGlyphs()][4];
+
+            double lastX = 0.0;
+            double lastY = 0.0;
+
+            for (int i = 0; i < getNumGlyphs(); i++) {
+                for(int j = 0; j < 4; j++) {
+                    doubleAdjustments[i][j] = adjustments[i][j];
+                }
+            }
+            return doubleAdjustments;
         }
     }
 }
