@@ -417,6 +417,7 @@ public class LayoutProcessor {
 //        } else {
         LPGlyphVector glyphVectorFop = fopComputeGlyphVector(baseFont, (int)(fontSize*1000), text);
 //        }
+//        return glyphVectorFop;
         return glyphVectorFop;
         // XXX Test mit FOP Text: "Test" Font NotoSerif-Regular hb-shape
     }
@@ -726,8 +727,8 @@ https://www.apache.org/licenses/LICENSE-2.0
                 lastY = p.getY();
             }
             Point2D p = glyphVector.getGlyphPosition(glyphVector.getNumGlyphs());
-            adjustments[glyphVector.getNumGlyphs()][Value.IDX_X_ADVANCE] = p.getX() - lastX;
-            adjustments[glyphVector.getNumGlyphs()][Value.IDX_Y_ADVANCE] = p.getY() - lastY;
+            adjustments[glyphVector.getNumGlyphs()-1][Value.IDX_X_ADVANCE] = p.getX() - lastX;
+            adjustments[glyphVector.getNumGlyphs()-1][Value.IDX_Y_ADVANCE] = p.getY() - lastY;
 
             return adjustments;
         }
@@ -818,24 +819,19 @@ https://www.apache.org/licenses/LICENSE-2.0
         float lastY = 0f;
 
         double[][] adjustments = glyphVector.getAdjustments();
-        for (int i = 0; i < glyphVector.getNumGlyphs(); i++) {
+        for (int i = 0; i < adjustments.length; i++) {
 
-            Point2D p = glyphVector.getGlyphPosition(i);
+            double dx = (float) adjustments[i][Value.IDX_X_PLACEMENT] + (i>0 ? adjustments[i-1][Value.IDX_X_ADVANCE] :
+                    0.0);
+            double dy = adjustments[i][Value.IDX_Y_PLACEMENT] + (i>0 ? adjustments[i-1][Value.IDX_Y_ADVANCE] : 0.0);
 
-            float dx = (float) p.getX() - lastX;
-            float dy = (float) p.getY() - lastY;
-
-            cb.moveTextBasic(dx, -dy);
-
+            cb.moveTextBasic((float)dx, (float)-dy);
             cb.showText(glyphVector, i, i + 1);
-
-            lastX = (float) p.getX();
-            lastY = (float) p.getY();
         }
         Point2D p = glyphVector.getGlyphPosition(glyphVector.getNumGlyphs());
-        float dx = (float) p.getX() - lastX;
-        float dy = (float) p.getY() - lastY;
-        cb.moveTextBasic(dx, -dy);
+        double dx = adjustments[adjustments.length - 1][Value.IDX_X_ADVANCE];
+        double dy = adjustments[adjustments.length - 1][Value.IDX_Y_ADVANCE];
+        cb.moveTextBasic((float)dx, (float)-dy);
         return new Point2D.Double(-p.getX(), p.getY());
     }
 
