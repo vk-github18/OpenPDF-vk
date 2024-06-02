@@ -1053,7 +1053,7 @@ https://www.apache.org/licenses/LICENSE-2.0
 
             for (int i = 0; i < getNumGlyphs(); i++) {
                 for(int j = 0; j < 4; j++) {
-                    doubleAdjustments[i][j] = adjustments[i][j];
+                    doubleAdjustments[i][j] = (double)adjustments[i][j];
                 }
             }
             return doubleAdjustments;
