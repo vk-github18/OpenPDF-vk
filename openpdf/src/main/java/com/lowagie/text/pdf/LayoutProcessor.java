@@ -410,12 +410,12 @@ public class LayoutProcessor {
      * @param text     input text
      * @return glyph vector containing reordered text, width and positioning info
      */
-    public static GlyphVector computeGlyphVector(BaseFont baseFont, float fontSize, String text) {
-        GlyphVector glyphVector = null;
+    public static LPGlyphVector computeGlyphVector(BaseFont baseFont, float fontSize, String text) {
+        LPGlyphVector glyphVector = null;
 //        if(useFOP) {
         glyphVector = awtComputeGlyphVector(baseFont, fontSize, text);
 //        } else {
-        GlyphVector glyphVectorFop = fopComputeGlyphVector(baseFont, (int)(fontSize*1000), text);
+        LPGlyphVector glyphVectorFop = fopComputeGlyphVector(baseFont, (int)(fontSize*1000), text);
 //        }
         return glyphVectorFop;
         // XXX Test mit FOP Text: "Test" Font NotoSerif-Regular hb-shape
@@ -428,7 +428,7 @@ public class LayoutProcessor {
      * @param text     input text
      * @return glyph vector containing reordered text, width and positioning info
      */
-    public static GlyphVector fopComputeGlyphVector(BaseFont baseFont, int fontSize1000, String text) {
+    public static LPGlyphVector fopComputeGlyphVector(BaseFont baseFont, int fontSize1000, String text) {
         final char[] chars = text.toCharArray();
 
         FontRenderContext fontRenderContext = new FontRenderContext(new AffineTransform(), false, true);
@@ -551,13 +551,16 @@ https://www.apache.org/licenses/LICENSE-2.0
             }
             System.out.printf(" w=%d\n", widths[i]);
         }
-        GlyphVector fopGlyphVector = new FopGlyphVector(adjustments, reorderedGlyphs, cidSubsetGlyphIndices,
+        LPGlyphVector fopGlyphVector = new FopGlyphVector(adjustments, reorderedGlyphs, cidSubsetGlyphIndices,
                 glyphIndices, associations, widths, total_width);
 
         return fopGlyphVector;
     }
 
-    static class AwtGlyphVector extends java.awt.font.GlyphVector {
+    static abstract class  LPGlyphVector extends java.awt.font.GlyphVector {
+        abstract public double[][] getAdjustments();
+    }
+    static class AwtGlyphVector extends LPGlyphVector {
 
         private final GlyphVector glyphVector;
 
@@ -737,7 +740,7 @@ https://www.apache.org/licenses/LICENSE-2.0
      * @param text     input text
      * @return glyph vector containing reordered text, width and positioning info
      */
-    public static GlyphVector awtComputeGlyphVector(BaseFont baseFont, float fontSize, String text) {
+    public static LPGlyphVector awtComputeGlyphVector(BaseFont baseFont, float fontSize, String text) {
         char[] chars = text.toCharArray();
 
         FontRenderContext fontRenderContext = new FontRenderContext(new AffineTransform(), false, true);
@@ -758,7 +761,7 @@ https://www.apache.org/licenses/LICENSE-2.0
                         : java.awt.Font.LAYOUT_RIGHT_TO_LEFT;
             }
         }
-        return awtFont.layoutGlyphVector(fontRenderContext, chars, 0, chars.length, localFlags);
+        return new AwtGlyphVector(awtFont.layoutGlyphVector(fontRenderContext, chars, 0, chars.length, localFlags));
     }
 
     /**
@@ -781,7 +784,7 @@ https://www.apache.org/licenses/LICENSE-2.0
      * @return layout position correction to correct the start of the next line
      */
     public static Point2D showText(PdfContentByte cb, BaseFont baseFont, float fontSize, String text) {
-        GlyphVector glyphVector = computeGlyphVector(baseFont, fontSize, text);
+        LPGlyphVector glyphVector = computeGlyphVector(baseFont, fontSize, text);
 
         System.out.print("chars: ");
         for (char c : text.toCharArray()) {
@@ -814,7 +817,9 @@ https://www.apache.org/licenses/LICENSE-2.0
         float lastX = 0f;
         float lastY = 0f;
 
+        double[][] adjustments = glyphVector.getAdjustments();
         for (int i = 0; i < glyphVector.getNumGlyphs(); i++) {
+
             Point2D p = glyphVector.getGlyphPosition(i);
 
             float dx = (float) p.getX() - lastX;
@@ -861,7 +866,7 @@ https://www.apache.org/licenses/LICENSE-2.0
         }
     }
 
-    static class FopGlyphVector extends GlyphVector {
+    static class FopGlyphVector extends LPGlyphVector {
 
         /**
          * A flag used with getLayoutFlags that indicates that this {@code GlyphVector} has per-glyph transforms.
