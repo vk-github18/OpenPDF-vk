@@ -418,7 +418,7 @@ public class LayoutProcessor {
         LPGlyphVector glyphVectorFop = fopComputeGlyphVector(baseFont, (int)(fontSize*1000), text);
 //        }
 //        return glyphVectorFop;
-        return glyphVectorFop;
+        return glyphVector;
         // XXX Test mit FOP Text: "Test" Font NotoSerif-Regular hb-shape
     }
 
@@ -719,7 +719,7 @@ https://www.apache.org/licenses/LICENSE-2.0
 
             for (int i = 0; i < glyphVector.getNumGlyphs(); i++) {
                 Point2D p = glyphVector.getGlyphPosition(i);
-
+                // XXX Falsch! f.getCharWidth(ch) nicht berücksichtigt!
                 adjustments[i][Value.IDX_X_PLACEMENT] = p.getX() - lastX;
                 adjustments[i][Value.IDX_Y_PLACEMENT] = p.getY() - lastY;
 
@@ -820,7 +820,8 @@ https://www.apache.org/licenses/LICENSE-2.0
 
         double[][] adjustments = glyphVector.getAdjustments();
         for (int i = 0; i < adjustments.length; i++) {
-
+            // XXX Falsch Siehe fop/PDFPainter/drawTextWithDP
+            //  f.getCharWidth(ch) nicht berücksichtigt!
             double dx = (float) adjustments[i][Value.IDX_X_PLACEMENT] + (i>0 ? adjustments[i-1][Value.IDX_X_ADVANCE] :
                     0.0);
             double dy = adjustments[i][Value.IDX_Y_PLACEMENT] + (i>0 ? adjustments[i-1][Value.IDX_Y_ADVANCE] : 0.0);
@@ -828,10 +829,11 @@ https://www.apache.org/licenses/LICENSE-2.0
             cb.moveTextBasic((float)dx, (float)-dy);
             cb.showText(glyphVector, i, i + 1);
         }
-        Point2D p = glyphVector.getGlyphPosition(glyphVector.getNumGlyphs());
         double dx = adjustments[adjustments.length - 1][Value.IDX_X_ADVANCE];
         double dy = adjustments[adjustments.length - 1][Value.IDX_Y_ADVANCE];
         cb.moveTextBasic((float)dx, (float)-dy);
+        Point2D p = glyphVector.getGlyphPosition(glyphVector.getNumGlyphs()); // XXX passt nicht zur Benutzung der
+        // Adjustments -> Lieber mit der LayoutProcessor Version 2.
         return new Point2D.Double(-p.getX(), p.getY());
     }
 
@@ -990,7 +992,7 @@ https://www.apache.org/licenses/LICENSE-2.0
         }
 
         @Override
-        public Point2D getGlyphPosition(int glyphIndex) {
+        public Point2D getGlyphPosition(int glyphIndex) { // XXX falsch
             if (glyphIndex < glyphCodes.length) {
                 Point2D p = new Point2D.Double(adjustments[glyphIndex][Value.IDX_X_PLACEMENT],
                         adjustments[glyphIndex][Value.IDX_Y_PLACEMENT]);
