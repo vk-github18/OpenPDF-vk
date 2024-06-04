@@ -161,8 +161,6 @@ public class GlyphLayoutDocumentDin91379 {
             writer.setInitialLeading(16.0f);
             document.open();
 
-            document.add(new Chunk("A̋C̀C̄C̆C̈", sansFont));
-/*
             document.add(new Chunk(TEXT_INTRO, sansFont));
 
             document.add(new Chunk(sansFontName + "\n" + LATIN_CHARS_DIN_91379, sansFont));
@@ -174,7 +172,7 @@ public class GlyphLayoutDocumentDin91379 {
             if (testChunks) {
                 addChunks(document, sansFont);
             }
-  */      }
+        }
         LayoutProcessor.disable();
     }
 
