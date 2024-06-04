@@ -416,8 +416,8 @@ public class LayoutProcessor {
 //        } else {
         LPGlyphVector glyphVectorFop = fopComputeGlyphVector(baseFont, (int)(fontSize*1000), text);
 //        }
-        return glyphVectorFop;
-//        return glyphVector;
+//        return glyphVectorFop;
+        return glyphVector;
         // XXX Test mit FOP Text: "Test" Font NotoSerif-Regular hb-shape
     }
 
@@ -716,7 +716,7 @@ https://www.apache.org/licenses/LICENSE-2.0
                 double ay = metrics.getAdvanceY();
 
                 adjustments[i][Value.IDX_X_PLACEMENT] = p.getX() - lastX - lastAx;
-                adjustments[i][Value.IDX_Y_PLACEMENT] = p.getY() - lastY - lastAy;
+                adjustments[i][Value.IDX_Y_PLACEMENT] = -(p.getY() - lastY - lastAy);
 
                 lastX = p.getX();
                 lastAx = ax;
@@ -725,7 +725,7 @@ https://www.apache.org/licenses/LICENSE-2.0
             }
             Point2D p = glyphVector.getGlyphPosition(glyphVector.getNumGlyphs());
             adjustments[glyphVector.getNumGlyphs()-1][Value.IDX_X_ADVANCE] = p.getX() - lastX;
-            adjustments[glyphVector.getNumGlyphs()-1][Value.IDX_Y_ADVANCE] = p.getY() - lastY;
+            adjustments[glyphVector.getNumGlyphs()-1][Value.IDX_Y_ADVANCE] = -(p.getY() - lastY);
 
             return adjustments;
         }
