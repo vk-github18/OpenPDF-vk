@@ -855,21 +855,19 @@ https://www.apache.org/licenses/LICENSE-2.0
             // Woraus bestimmt man die Position des näcsten Zeichens?
             // Was ist die genaue Bedeutung der "Adjustments?"
 
-            double dx = lastAx + adjustments[i][Value.IDX_X_PLACEMENT] + (i>0 ? adjustments[i-1][Value.IDX_X_ADVANCE] :
+            double dx = lastAx + (i>0 ? adjustments[i-1][Value.IDX_X_ADVANCE] :
                     0.0);
-            double dy = lastAy + adjustments[i][Value.IDX_Y_PLACEMENT] + (i>0 ? adjustments[i-1][Value.IDX_Y_ADVANCE] :
+            double dy = lastAy + (i>0 ? adjustments[i-1][Value.IDX_Y_ADVANCE] :
                     0.0);
 
-            cb.moveTextBasic((float)dx, (float)-dy);
+            cb.moveTextBasic((float)(dx + adjustments[i][Value.IDX_X_PLACEMENT]) , (float)(dy + adjustments[i][Value.IDX_Y_PLACEMENT]));
             cb.showText(glyphVector, i, i + 1);
-            cb.moveTextBasic((float) -adjustments[i][Value.IDX_X_PLACEMENT],
-                    (float) -adjustments[i][Value.IDX_Y_PLACEMENT]);
 
-            lastAx = glyphVector.getAdvanceX(i);
-            lastAy = glyphVector.getAdvanceY(i);
+            lastAx = glyphVector.getAdvanceX(i) - adjustments[i][Value.IDX_X_PLACEMENT];;
+            lastAy = glyphVector.getAdvanceY(i) - adjustments[i][Value.IDX_Y_PLACEMENT];;
 
-            lastX += lastAx;
-            lastY += lastAy;
+            lastX += dx;
+            lastY += dy;
         }
         double dx = lastAx + adjustments[adjustments.length - 1][Value.IDX_X_ADVANCE];
         double dy = lastAy + adjustments[adjustments.length - 1][Value.IDX_Y_ADVANCE];
