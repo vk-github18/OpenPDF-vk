@@ -75,7 +75,6 @@ import org.apache.fop.apps.io.ResourceResolverFactory;
 import org.apache.fop.complexscripts.fonts.GlyphPositioningTable;
 import org.apache.fop.complexscripts.fonts.GlyphPositioningTable.Value;
 import org.apache.fop.complexscripts.util.CharScript;
-import org.apache.fop.complexscripts.util.GlyphSequence;
 import org.apache.fop.fonts.EmbedFontInfo;
 import org.apache.fop.fonts.EmbeddingMode;
 import org.apache.fop.fonts.EncodingMode;
@@ -417,8 +416,8 @@ public class LayoutProcessor {
 //        } else {
         LPGlyphVector glyphVectorFop = fopComputeGlyphVector(baseFont, (int)(fontSize*1000), text);
 //        }
-//        return glyphVectorFop;
-        return glyphVector;
+        return glyphVectorFop;
+//        return glyphVector;
         // XXX Test mit FOP Text: "Test" Font NotoSerif-Regular hb-shape
     }
 
@@ -511,20 +510,7 @@ https://www.apache.org/licenses/LICENSE-2.0
             }
             // XXX Compute positions from adjustments, see fop/PDFPainter/drawTextWithDP
             // XXX Or layout with adjustments, not positions ... siehe aktuellen Branch ...
-            widths[i] = fopFont.getWidth(cidSubsetGlyphIndices[i], (int) fontSize1000); // XXX Ist das hier die richtige
-            // Breite
-            if (widths[i] < 0) {
-                widths[i] = 0;
-            }
-            if (adjustments != null) {
-                widths[i] += adjustments[cpi][GlyphPositioningTable.Value.IDX_X_ADVANCE];
-            }
-            ipd = ipd.plus(widths[i]);
-
-        }
-        int total_width = 0;
-        for (int w: widths) {
-            total_width += w;
+            widths[i] = fopFont.getWidth(cidSubsetGlyphIndices[i], (int) fontSize1000/1000); // XXX Ist das hier die
         }
 
 /*
@@ -553,13 +539,16 @@ https://www.apache.org/licenses/LICENSE-2.0
             System.out.printf(" w=%d\n", widths[i]);
         }
         LPGlyphVector fopGlyphVector = new FopGlyphVector(adjustments, reorderedGlyphs, cidSubsetGlyphIndices,
-                glyphIndices, associations, widths, total_width);
+                glyphIndices, associations, widths);
 
         return fopGlyphVector;
     }
 
-    static abstract class  LPGlyphVector extends java.awt.font.GlyphVector {
+    static abstract class LPGlyphVector extends java.awt.font.GlyphVector {
         abstract public double[][] getAdjustments();
+
+        abstract public double getAdvanceX(int i);
+        abstract public double getAdvanceY(int i);
     }
     static class AwtGlyphVector extends LPGlyphVector {
 
@@ -715,22 +704,44 @@ https://www.apache.org/licenses/LICENSE-2.0
             double[][] adjustments = new double[glyphVector.getNumGlyphs()][4];
 
             double lastX = 0.0;
+            double lastAx = 0.0;
+
             double lastY = 0.0;
+            double lastAy = 0.0;
 
             for (int i = 0; i < glyphVector.getNumGlyphs(); i++) {
                 Point2D p = glyphVector.getGlyphPosition(i);
-                // XXX Falsch! f.getCharWidth(ch) nicht berücksichtigt!
-                adjustments[i][Value.IDX_X_PLACEMENT] = p.getX() - lastX;
-                adjustments[i][Value.IDX_Y_PLACEMENT] = p.getY() - lastY;
+                GlyphMetrics metrics = glyphVector.getGlyphMetrics(i);
+                double ax = metrics.getAdvanceX();
+                double ay = metrics.getAdvanceY();
+
+                adjustments[i][Value.IDX_X_PLACEMENT] = p.getX() - lastX - lastAx;
+                adjustments[i][Value.IDX_Y_PLACEMENT] = p.getY() - lastY - lastAy;
 
                 lastX = p.getX();
+                lastAx = ax;
                 lastY = p.getY();
+                lastAy= ay;
             }
             Point2D p = glyphVector.getGlyphPosition(glyphVector.getNumGlyphs());
             adjustments[glyphVector.getNumGlyphs()-1][Value.IDX_X_ADVANCE] = p.getX() - lastX;
             adjustments[glyphVector.getNumGlyphs()-1][Value.IDX_Y_ADVANCE] = p.getY() - lastY;
 
             return adjustments;
+        }
+
+        @Override
+        public double getAdvanceX(int i) {
+            GlyphMetrics metrics = glyphVector.getGlyphMetrics(i);
+            double ax = metrics.getAdvanceX();
+            return ax;
+        }
+
+        @Override
+        public double getAdvanceY(int i) {
+            GlyphMetrics metrics = glyphVector.getGlyphMetrics(i);
+            double ay = metrics.getAdvanceY();
+            return ay;
         }
     }
 
@@ -802,7 +813,25 @@ https://www.apache.org/licenses/LICENSE-2.0
         //for (int ci: charIndizes) {
         //     System.out.println("charIndizes="+ci);
         //}
-
+/*
+        for (int i=0; i<glyphVector.getNumGlyphs(); i++) {
+            GlyphMetrics metrics = glyphVector.getGlyphMetrics(i);
+            float ax = metrics.getAdvanceX();
+            float ay = metrics.getAdvanceY();
+            Rectangle2D bounds = metrics.getBounds2D();
+            double x = bounds.getX();
+            double y = bounds.getY();
+            double w = bounds.getWidth();
+            double h = bounds.getHeight();
+            System.out.printf("%d x=%f w=%f ax=%f y=%f h=%f ay=%f\n", i, x, w, ax, y, h, ay);
+        }
+        for (int i=0; i<glyphVector.getNumGlyphs()+1; i++) {
+            Point2D pos = glyphVector.getGlyphPosition(i);
+            double px = pos.getX();
+            double py = pos.getY();
+            System.out.printf("%d px=%f py=%f\n", i, px, py);
+        }
+*/
         if (!hasAdjustments(glyphVector)) {
             cb.showText(glyphVector);
             // XXX Wird die Breite noch richtig bei Ligaturen etc?
@@ -815,26 +844,32 @@ https://www.apache.org/licenses/LICENSE-2.0
             float dy = 0f;
             return new Point2D.Float(-dx, dy);
         }
-        float lastX = 0f;
-        float lastY = 0f;
+        double lastX = 0.0;
+        double lastAx = 0.0;
+        double lastY = 0.0;
+        double lastAy = 0.0;
 
         double[][] adjustments = glyphVector.getAdjustments();
         for (int i = 0; i < adjustments.length; i++) {
             // XXX Falsch Siehe fop/PDFPainter/drawTextWithDP
-            //  f.getCharWidth(ch) nicht berücksichtigt!
-            double dx = (float) adjustments[i][Value.IDX_X_PLACEMENT] + (i>0 ? adjustments[i-1][Value.IDX_X_ADVANCE] :
+
+            double ax = glyphVector.getAdvanceX(i);
+            double ay = glyphVector.getAdvanceY(i);
+            double dx = lastAx + adjustments[i][Value.IDX_X_PLACEMENT] + (i>0 ? adjustments[i-1][Value.IDX_X_ADVANCE] :
                     0.0);
-            double dy = adjustments[i][Value.IDX_Y_PLACEMENT] + (i>0 ? adjustments[i-1][Value.IDX_Y_ADVANCE] : 0.0);
+            double dy = lastAy + adjustments[i][Value.IDX_Y_PLACEMENT] + (i>0 ? adjustments[i-1][Value.IDX_Y_ADVANCE] :
+                    0.0);
 
             cb.moveTextBasic((float)dx, (float)-dy);
             cb.showText(glyphVector, i, i + 1);
+
+            lastAx = ax;
+            lastAy = ay;
         }
-        double dx = adjustments[adjustments.length - 1][Value.IDX_X_ADVANCE];
-        double dy = adjustments[adjustments.length - 1][Value.IDX_Y_ADVANCE];
+        double dx = lastAx + adjustments[adjustments.length - 1][Value.IDX_X_ADVANCE];
+        double dy = lastAy + adjustments[adjustments.length - 1][Value.IDX_Y_ADVANCE];
         cb.moveTextBasic((float)dx, (float)-dy);
-        Point2D p = glyphVector.getGlyphPosition(glyphVector.getNumGlyphs()); // XXX passt nicht zur Benutzung der
-        // Adjustments -> Lieber mit der LayoutProcessor Version 2.
-        return new Point2D.Double(-p.getX(), p.getY());
+        return new Point2D.Double(-dx, dy);
     }
 
     public static void disable() {
@@ -902,17 +937,14 @@ https://www.apache.org/licenses/LICENSE-2.0
         private final int[] glyphCodes;
         private final List associations;
         private final int[] widths;
-        private final int total_width;
-
         public FopGlyphVector(int[][] adjustments, CharSequence glyphsAsChar, int[] cidSubsetGlyphIndices,
-                int[] glyphIndices, List associations, int[] widths, int total_width) {
+                int[] glyphIndices, List associations, int[] widths) {
             this.adjustments = adjustments;
             this.glyphsAsChar = glyphsAsChar;
             this.cidSubsetGlyphIndices = cidSubsetGlyphIndices;
             this.glyphCodes = glyphIndices;
             this.associations = associations;
             this.widths = widths;
-            this.total_width = total_width;
         }
 
         public boolean hasAdjustments() {
@@ -992,14 +1024,8 @@ https://www.apache.org/licenses/LICENSE-2.0
         }
 
         @Override
-        public Point2D getGlyphPosition(int glyphIndex) { // XXX falsch
-            if (glyphIndex < glyphCodes.length) {
-                Point2D p = new Point2D.Double(adjustments[glyphIndex][Value.IDX_X_PLACEMENT],
-                        adjustments[glyphIndex][Value.IDX_Y_PLACEMENT]);
-                return p;
-            } else {
-                return new Point2D.Double(total_width, 0);
-            }
+        public Point2D getGlyphPosition(int glyphIndex) {
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -1019,7 +1045,7 @@ https://www.apache.org/licenses/LICENSE-2.0
 
         @Override
         public float[] getGlyphPositions(int beginGlyphIndex, int numEntries, float[] positionReturn) {
-            return new float[0];
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -1055,10 +1081,20 @@ https://www.apache.org/licenses/LICENSE-2.0
 
             for (int i = 0; i < getNumGlyphs(); i++) {
                 for(int j = 0; j < 4; j++) {
-                    doubleAdjustments[i][j] = (double)adjustments[i][j];
+                    doubleAdjustments[i][j] = (double)adjustments[i][j]/1000.0;
                 }
             }
             return doubleAdjustments;
+        }
+
+        @Override
+        public double getAdvanceX(int i) {
+            return widths[i]/1000.0;
+        }
+
+        @Override
+        public double getAdvanceY(int i) {
+            return 0.0/1000.0;
         }
     }
 }
