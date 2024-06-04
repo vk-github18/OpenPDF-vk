@@ -853,8 +853,6 @@ https://www.apache.org/licenses/LICENSE-2.0
         for (int i = 0; i < adjustments.length; i++) {
             // XXX Falsch Siehe fop/PDFPainter/drawTextWithDP
 
-            double ax = glyphVector.getAdvanceX(i);
-            double ay = glyphVector.getAdvanceY(i);
             double dx = lastAx + adjustments[i][Value.IDX_X_PLACEMENT] + (i>0 ? adjustments[i-1][Value.IDX_X_ADVANCE] :
                     0.0);
             double dy = lastAy + adjustments[i][Value.IDX_Y_PLACEMENT] + (i>0 ? adjustments[i-1][Value.IDX_Y_ADVANCE] :
@@ -862,14 +860,19 @@ https://www.apache.org/licenses/LICENSE-2.0
 
             cb.moveTextBasic((float)dx, (float)-dy);
             cb.showText(glyphVector, i, i + 1);
+            cb.moveTextBasic((float) -adjustments[i][Value.IDX_X_PLACEMENT],
+                    (float) -adjustments[i][Value.IDX_Y_PLACEMENT]);
 
-            lastAx = ax;
-            lastAy = ay;
+            lastAx = glyphVector.getAdvanceX(i);
+            lastAy = glyphVector.getAdvanceY(i);
+
+            lastX += lastAx;
+            lastY += lastAy;
         }
         double dx = lastAx + adjustments[adjustments.length - 1][Value.IDX_X_ADVANCE];
         double dy = lastAy + adjustments[adjustments.length - 1][Value.IDX_Y_ADVANCE];
         cb.moveTextBasic((float)dx, (float)-dy);
-        return new Point2D.Double(-dx, dy);
+        return new Point2D.Double(-(lastX+dx), lastY+dy);
     }
 
     public static void disable() {
@@ -1075,9 +1078,6 @@ https://www.apache.org/licenses/LICENSE-2.0
 
         public double[][] getAdjustments() {
             double[][] doubleAdjustments = new double[getNumGlyphs()][4];
-
-            double lastX = 0.0;
-            double lastY = 0.0;
 
             for (int i = 0; i < getNumGlyphs(); i++) {
                 for(int j = 0; j < 4; j++) {
